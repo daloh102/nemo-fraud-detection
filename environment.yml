@@ -1,0 +1,9 @@
+name: bank_fraud_nemo
+dependencies:
+  - python=3.10
+  - pip
+  - pip:
+      - nemo-toolkit
+      - torch
+      - wandb
+      - jupyterlab

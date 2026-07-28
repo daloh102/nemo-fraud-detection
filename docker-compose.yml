@@ -1,0 +1,86 @@
+version: '3.8'
+
+services:
+  # ============================================================================
+  # PHASE 1: GROSSES LLM FÜR DIE DATENGENERIERUNG (z.B. Llama-3.1-70B / 405B)
+  # ============================================================================
+  nim_large_sdg:
+    image: nvcr.io/nim/meta/llama-3.1-70b-instruct:latest
+    container_name: nim_large_sdg
+    profiles: ["sdg"]  # Startet NUR im SDG-Profil
+    environment:
+      - NGC_API_KEY=${NGC_API_KEY}
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./model_cache:/opt/nim/.cache
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/v1/health/ready"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+
+  nemo_data_designer:
+    image: nvcr.io/nvidia/nemo-microservices/data-designer:25.12
+    container_name: nemo_data_designer
+    profiles: ["sdg"]  # Startet NUR im SDG-Profil
+    ports:
+      - "8004:8004"
+    environment:
+      - OPENAI_BASE_URL=http://nim_large_sdg:8000/v1
+      - OPENAI_API_KEY=not-needed
+      - DEFAULT_MODEL_NAME=meta/llama-3.1-70b-instruct
+    volumes:
+      - ./data:/workspace/data
+      - ./configs:/workspace/configs
+    depends_on:
+      nim_large_sdg:
+        condition: service_healthy
+
+  # ============================================================================
+  # PHASE 2: NEMO CUSTOMIZER & KLEINES MISTRAL LLM (Kleine Basis für SFT)
+  # ============================================================================
+  nim_small_target:
+    image: nvcr.io/nim/mistralai/mistral-7b-instruct-v0.3:latest
+    container_name: nim_small_target
+    profiles: ["fine_tuning"]  # Startet NUR im Fine-Tuning-Profil
+    environment:
+      - NGC_API_KEY=${NGC_API_KEY}
+    ports:
+      - "8000:8000"  # Nutzt denselben Port wie der große NIM
+    volumes:
+      - ./model_cache:/opt/nim/.cache
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+  nemo_customizer:
+    image: nvcr.io/nvidia/nemo:24.09
+    container_name: nemo_customizer
+    profiles: ["fine_tuning", "curation"] # Auch nach SDG nutzbar
+    working_dir: /workspace
+    stdin_open: true
+    tty: true
+    environment:
+      - PYTHONPATH=/workspace:/workspace/src
+    volumes:
+      - .:/workspace
+      - ./data:/workspace/data
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]

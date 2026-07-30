@@ -1,63 +1,124 @@
 import os
+import sys
 import json
-from sklearn.model_selection import train_test_split
+import random
+from pathlib import Path
 
-BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+# ==============================================================================
+# 1. PFAD-KONFIGURATION
+# ==============================================================================
+BASE_DIR = Path("/data/nemo-fraud-detection")
+DATA_DIR = BASE_DIR / "data"
 
-CURATED_INPUT = os.path.join(BASE_DIR, "data", "curated", "deduplicated_calls.jsonl")
-BENCHMARK_INPUT = os.path.join(BASE_DIR, "data", "evaluation", "benchmark_dataset.jsonl")
+CURATED_PATH = DATA_DIR / "curated" / "dialogues_transcripts_curator.jsonl"
+BENCHMARK_PATH = DATA_DIR / "evaluation" / "dialogues_benchmark.jsonl"
+SFT_DIR = DATA_DIR / "sft"
 
-SFT_DIR = os.path.join(BASE_DIR, "data", "sft")
-
-def prepare_sft_splits():
-    print("📊 Bereite SFT Datensätze vor...")
-    os.makedirs(SFT_DIR, exist_ok=True)
+# ==============================================================================
+# 2. STRIKTES ERROR HANDLING (FAIL-FAST)
+# ==============================================================================
+def validate_required_files():
+    print("🔍 Prüfe Eingabedateien...")
     
-    # 1. Benchmarks / Ground Truth Mapping laden
-    ground_truth_map = {}
-    with open(BENCHMARK_INPUT, "r", encoding="utf-8") as f:
+    if not CURATED_PATH.exists():
+        print(f"❌ KRITISCHER FEHLER: Kuratierte Datei nicht gefunden: '{CURATED_PATH}'")
+        sys.exit(1)
+        
+    if not BENCHMARK_PATH.exists():
+        print(f"❌ KRITISCHER FEHLER: Benchmark-Datei nicht gefunden: '{BENCHMARK_PATH}'")
+        sys.exit(1)
+
+    print("✅ Alle benötigten Dateien wurden gefunden.\n")
+
+# ==============================================================================
+# 3. HELPER FUNCTIONS
+# ==============================================================================
+def load_jsonl(path):
+    records = []
+    with open(path, "r", encoding="utf-8") as f:
         for line in f:
             if line.strip():
-                item = json.loads(line)
-                ground_truth_map[item["call_id"]] = item["ground_truth"]
-                
-    # 2. Kuratierte Transkripte laden & matchen
-    sft_records = []
-    with open(CURATED_INPUT, "r", encoding="utf-8") as f:
-        for line in f:
-            if line.strip():
-                doc = json.loads(line)
-                cid = doc.get("call_id")
-                # Nur Datensätze verwenden, die in der Benchmark-Truth existieren
-                if cid in ground_truth_map:
-                    label = ground_truth_map[cid]
-                    # Formatierung für NeMo Customizer SFT
-                    sft_payload = {
-                        "input": f"Klassifiziere folgendes Telefongespräch als 'fraud' oder 'legit':\n{doc['text']}\nKlassifikation:",
-                        "output": label
-                    }
-                    sft_records.append(sft_payload)
+                records.append(json.loads(line))
+    return records
 
-    # 3. Stratifizierter Split (70% Train / 15% Val / 15% Test)
-    labels = [r["output"] for r in sft_records]
-    train_data, rest_data, _, rest_labels = train_test_split(
-        sft_records, labels, test_size=0.30, stratify=labels, random_state=42
-    )
-    val_data, test_data = train_test_split(
-        rest_data, test_size=0.50, stratify=rest_labels, random_state=42
-    )
+def save_jsonl(records, path):
+    with open(path, "w", encoding="utf-8") as f:
+        for r in records:
+            f.write(json.dumps(r, ensure_ascii=False) + "\n")
+
+# ==============================================================================
+# 4. MAIN PIPELINE
+# ==============================================================================
+def main():
+    validate_required_files()
+
+    print("📊 Bereite SFT-Datensätze vor...")
     
-    def save_file(path, data):
-        with open(path, "w", encoding="utf-8") as f:
-            for d in data:
-                f.write(json.dumps(d, ensure_ascii=False) + "\n")
-        print(f"   -> Exportiert: {path} ({len(data)} Einträge)")
+    curated_data = load_jsonl(CURATED_PATH)
+    benchmark_data = load_jsonl(BENCHMARK_PATH)
 
-    save_file(os.path.join(SFT_DIR, "train.jsonl"), train_data)
-    save_file(os.path.join(SFT_DIR, "validation.jsonl"), val_data)
-    save_file(os.path.join(SFT_DIR, "test.jsonl"), test_data)
+    # 1. Lookup-Map aus Benchmark aufbauen (Schlüssel: "id", z.B. "doc-00001")
+    gt_map = {}
+    for item in benchmark_data:
+        cid = item.get("id")
+        label = item.get("label") or item.get("fraud_type")
+        if cid and label:
+            gt_map[str(cid)] = label
 
-    print("✅ SFT Datensätze erfolgreich im Ordner 'data/sft/' gespeichert!")
+    # 2. Matching über 'call_id' ausführen
+    sft_samples = []
+    matched_count = 0
+
+    for doc in curated_data:
+        text = doc.get("text", "")
+        # Priorisiere 'call_id' (z. B. "doc-00001"), Fallback auf 'id'
+        cid = str(doc.get("call_id") or doc.get("id", ""))
+        
+        gt_label = gt_map.get(cid)
+        
+        if gt_label:
+            matched_count += 1
+            sft_samples.append({
+                "input": text,
+                "output": gt_label
+            })
+
+    total_docs = len(curated_data)
+    print(f"ℹ️ Total geladene Dokumente: {total_docs}")
+    print(f"   Davon erfolgreich mit Ground-Truth gematcht: {matched_count}")
+
+    # STRIKTER ABBRUCH: Bricht ab, falls auch nur 1 Dokument nicht gematcht werden kann
+    if matched_count < total_docs:
+        print(f"\n❌ KRITISCHER MATCHING-FEHLER: Es konnten nur {matched_count} von {total_docs} Dokumenten gematcht werden!")
+        print("   -> Der Vorgang wird abgebrochen, um unvollständige SFT-Daten zu verhindern.")
+        sys.exit(1)
+
+    # 3. Train / Val / Test Split (70% / 15% / 15%)
+    random.seed(42)
+    random.shuffle(sft_samples)
+
+    train_end = int(total_docs * 0.70)
+    val_end = train_end + int(total_docs * 0.15)
+
+    train_data = sft_samples[:train_end]
+    val_data = sft_samples[train_end:val_end]
+    test_data = sft_samples[val_end:]
+
+    # 4. Speichern
+    SFT_DIR.mkdir(parents=True, exist_ok=True)
+    
+    train_path = SFT_DIR / "train.jsonl"
+    val_path = SFT_DIR / "validation.jsonl"
+    test_path = SFT_DIR / "test.jsonl"
+
+    save_jsonl(train_data, train_path)
+    save_jsonl(val_data, val_path)
+    save_jsonl(test_data, test_path)
+
+    print(f"\n   -> Exportiert: train.jsonl ({len(train_data)} Einträge)")
+    print(f"   -> Exportiert: validation.jsonl ({len(val_data)} Einträge)")
+    print(f"   -> Exportiert: test.jsonl ({len(test_data)} Einträge)")
+    print(f"\n✅ SFT-Datensätze mit 100% Matching-Quote in '{SFT_DIR}' gespeichert!")
 
 if __name__ == "__main__":
-    prepare_sft_splits()
+    main()

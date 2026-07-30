@@ -1,5 +1,30 @@
-wandb/
-models/
-data/raw/
+# Sensitive files
+.env
+
+# Data & Cache files
+data/
+*.jsonl
+*.json
+*.log
+src/curator/*.log
+
+# Reports
+reports/
+
+# Jupyter Notebook Checkpoints
 .ipynb_checkpoints/
+*/.ipynb_checkpoints/*
+**/.ipynb_checkpoints/
+
+# Python Cache & Bytecode
 __pycache__/
+*/__pycache__/
+**/__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+
+# Virtual Environments (falls vorhanden)
+.venv/
+venv/
+env/

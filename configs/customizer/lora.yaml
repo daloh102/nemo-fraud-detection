@@ -1,0 +1,51 @@
+trainer:
+  devices: 1
+  num_nodes: 1
+  accelerator: gpu
+  precision: bf16-mixed
+  logger: False
+  enable_checkpointing: False
+  max_epochs: 3
+  max_steps: -1
+  val_check_interval: 1.0
+  gradient_clip_val: 1.0
+
+model:
+  restore_from_path: "meta-llama/Llama-3.2-3B-Instruct"
+  save_to: "results/fraud_detection_lora"  
+
+  # PEFT / LoRA Einstellungen (bereinigt für AutoModel)
+  peft:
+    peft_scheme: "lora"
+    lora_tuning:
+      adapter_dim: 16
+      adapter_dropout: 0.05
+      lora_alpha: 32
+
+  data:
+    train_ds:
+      file_names: ["data/sft/train.jsonl"]
+      global_batch_size: 8
+      micro_batch_size: 2
+      shuffle: True
+      num_workers: 2
+      max_seq_length: 2048
+      drop_last: False
+
+    validation_ds:
+      file_names: ["data/sft/validation.jsonl"]
+      global_batch_size: 8
+      micro_batch_size: 2
+      shuffle: False
+      num_workers: 2
+      max_seq_length: 2048
+      drop_last: False
+
+  optim:
+    name: adamw
+    lr: 1e-4
+    weight_decay: 0.01
+    sched:
+      name: CosineAnnealing
+      warmup_steps: 50
+      min_lr: 1e-6

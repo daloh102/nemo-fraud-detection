@@ -10,8 +10,8 @@ from openai import AsyncOpenAI
 # 1. Konfiguration über Environment Variables (Fallback auf Default)
 NIM_BASE_URL = os.getenv("NIM_BASE_URL", "http://172.31.18.77:8001/v1")
 MODEL_NAME = "meta/llama-3.1-8b-instruct"
-OUTPUT_DATA_FILE = "fraud_call_transcripts_new.jsonl"
-OUTPUT_BENCHMARK_FILE = "fraud_call_benchmark_new.jsonl"
+OUTPUT_DATA_FILE = "fraud_call_transcripts_newest.jsonl"
+OUTPUT_BENCHMARK_FILE = "fraud_call_benchmark_newest.jsonl"
 NUM_SAMPLES = 8000
 CONCURRENCY_LIMIT = 15  # Max 15 parallele Anfragen an das NIM
 
@@ -19,7 +19,16 @@ client = AsyncOpenAI(base_url=NIM_BASE_URL, api_key="not-needed")
 semaphore = asyncio.Semaphore(CONCURRENCY_LIMIT)
 file_lock = asyncio.Lock()  # Verhindert Verwaschen von Zeilen beim parallelen Schreiben
 
-# 2. Szenarien-Katalog: Fraud (Inbound: Anrufer gibt sich als Kunde aus)
+# 2. Erweiterter Namens-Pool (20 Namen) für maximale Varianz im Finetuning
+KUNDEN_NAMEN = [
+    "Herr Müller", "Frau Schmidt", "Herr Schneider", "Frau Fischer", 
+    "Herr Weber", "Frau Meyer", "Herr Wagner", "Frau Becker", 
+    "Herr Hoffmann", "Frau Schulz", "Herr Koch", "Frau Bauer", 
+    "Herr Richter", "Frau Klein", "Herr Wolf", "Frau Schröder", 
+    "Herr Neumann", "Frau Schwarz", "Herr Zimmermann", "Frau Braun"
+]
+
+# 3. Szenarien-Katalog: Fraud (Inbound: Anrufer gibt sich als Kunde aus)
 FRAUD_SCENARIOS = [
     "Kunde fordert sofortige Kontoentsperrung, verweigert aber Sicherheitscodes wegen angeblich defektem Handy.",
     "Kunde verlangt Passwort-Reset für Online-Banking und nutzt entwendete Stammdaten (Geburtsdatum, Adresse), scheitert aber an Sicherheitsfrage.",
@@ -89,11 +98,11 @@ class TranscriptSchema(BaseModel):
 
 system_prompt = (
     "Du bist ein spezialisierter Data-Generator für Security- & Fraud-Detection-Modelle im Banking-Sektor.\n"
-    "Deine Aufgabe ist es, realistisch klingende Transkripte von Telefonaten zwischen einem Anrufer (Kunde oder Betrüger) und einem Bankmitarbeiter (Agent) zu erzeugen.\n\n"
+    "Deine Aufgabe ist es, realistisch klingende Transkripte von Telefonaten zwischen einem Anrufer und einem Bankmitarbeiter (Agent) zu erzeugen.\n\n"
     "WICHTIG:\n"
-    "1. Der Anrufer ist derjenige, der bei der Bank anruft. Der Agent ist der Bankmitarbeiter.\n"
-    "2. Bei Fraud-Calls versucht der Anrufer (Fake-Kunde), den Agenten durch Täuschung, Ausreden, Druck oder Manipulation zu unberechtigten Aktionen zu bewegen. Der Agent muss Sicherheitsrichtlinien beachten.\n"
-    "3. Verwende im Text strikt die Sprecher-Präfixe 'Kunde:' (für den Anrufer) und 'Agent:' (für den Bankmitarbeiter).\n"
+    "1. Verwende für den Kunden im Dialog den Namen, der im Prompt vorgegeben wird, und sprich ihn auch so an.\n"
+    "2. Bei Fraud-Calls versucht der Anrufer, den Agenten durch Täuschung, Ausreden, Druck oder Manipulation zu unberechtigten Aktionen zu bewegen. Der Agent muss Sicherheitsrichtlinien beachten.\n"
+    "3. Verwende im Text strikt die Sprecher-Präfixe 'Kunde:' bzw. den Namen und 'Agent:'.\n"
     "4. Antworte AUSSCHLIESSLICH mit einem validen JSON-Objekt ohne Markdown-Formatierung:\n"
     "{\n"
     '  "id": "doc-XXX",\n'
@@ -105,6 +114,22 @@ system_prompt = (
 # globaler Zähler für Fortschrittsanzeige
 completed_counter = 0
 
+async def test_llm_connection():
+    """Testet vorab, ob der LLM-Container erreichbar ist und antwortet."""
+    print(f"🔍 Teste Verbindung zum LLM unter {NIM_BASE_URL} (Modell: {MODEL_NAME})...")
+    try:
+        response = await client.chat.completions.create(
+            model=MODEL_NAME,
+            messages=[{"role": "user", "content": "Antworte nur mit 'OK'"}],
+            max_tokens=10
+        )
+        answer = response.choices[0].message.content.strip()
+        print(f"✅ Verbindung erfolgreich! Test-Antwort vom Modell: '{answer}'")
+    except Exception as e:
+        print(f"❌ Verbindungstest zum LLM-Container fehlgeschlagen: {e}")
+        print("💡 Bitte prüfe, ob der Docker-Container läuft und die URL/Port korrekt sind.")
+        raise SystemExit(1)
+
 async def generate_single_sample(index: int, f_data, f_bench):
     global completed_counter
     doc_id = f"doc-{index:05d}"
@@ -112,12 +137,14 @@ async def generate_single_sample(index: int, f_data, f_bench):
     label = "fraud" if is_fraud else "legitimate"
     tone = random.choice(TONES)
     length_desc, max_tokens_limit = random.choice(LENGTH_PROMPTS)
+    customer_name = random.choice(KUNDEN_NAMEN)  # Zufällige Namenswahl aus 20 Namen
     
     if is_fraud:
         scenario = random.choice(FRAUD_SCENARIOS)
         user_prompt = (
             f"Generiere ein BETRUGSGESPRAECH (Fraud Call / Social Engineering Inbound Call).\n"
-            f"Szenario: Der Anrufer gibt sich als Kunde aus und versucht den Bankmitarbeiter zu überlisten. Details: {scenario}\n"
+            f"Name des Kunden: {customer_name}.\n"
+            f"Szenario: Der Anrufer gibt sich als dieser Kunde aus und versucht den Bankmitarbeiter zu überlisten. Details: {scenario}\n"
             f"Stimmung des Anrufers: {tone}.\n"
             f"Gesprächslänge: {length_desc}.\n"
             f"Achte auf realistische Dialogführung inklusive Nachfragen des Agenten nach Sicherheitsdaten und Reaktionen des Anrufers."
@@ -126,7 +153,8 @@ async def generate_single_sample(index: int, f_data, f_bench):
         scenario = random.choice(LEGITIMATE_SCENARIOS)
         user_prompt = (
             f"Generiere ein LEGITIMES, normales Kundengespräch am Telefon (Legitimate Call).\n"
-            f"Szenario: Ein echter Kunde ruft beim Kundenservice der Bank an. Details: {scenario}\n"
+            f"Name des Kunden: {customer_name}.\n"
+            f"Szenario: Der echte Kunde ruft beim Kundenservice der Bank an. Details: {scenario}\n"
             f"Stimmung des Kunden: {tone}.\n"
             f"Gesprächslänge: {length_desc}.\n"
             f"Der Kunde beantwortet Sicherheitsfragen korrekt und der Agent hilft gemäß den Bankstandards."
@@ -183,7 +211,7 @@ async def generate_single_sample(index: int, f_data, f_bench):
                 if attempt == 2:
                     print(f"❌ Fehler bei {doc_id} nach 3 Versuchen: {e}")
                     # Fallback im Fehlerfall schreiben
-                    fallback_text = "Kunde: Guten Tag, ich möchte eine Überweisung tätigen.\nAgent: Guten Tag. Aus Sicherheitsgründen benötige ich Ihre Legitimation."
+                    fallback_text = f"Kunde: Guten Tag, ich bin {customer_name} und möchte eine Überweisung tätigen.\nAgent: Guten Tag. Aus Sicherheitsgründen benötige ich Ihre Legitimation."
                     fallback_data = TranscriptSchema(id=doc_id, text=fallback_text)
                     async with file_lock:
                         f_data.write(fallback_data.model_dump_json() + "\n")
@@ -193,7 +221,10 @@ async def generate_single_sample(index: int, f_data, f_bench):
                 await asyncio.sleep(1 * (attempt + 1))  # Exponential backoff
 
 async def main():
-    print(f"🚀 Starte asynchrone Generierung von {NUM_SAMPLES} Datensätzen (Max Concurrency: {CONCURRENCY_LIMIT})...")
+    # Verbindungstest vor dem Start der Generierung ausführen
+    await test_llm_connection()
+
+    print(f"\n🚀 Starte asynchrone Generierung von {NUM_SAMPLES} Datensätzen (Max Concurrency: {CONCURRENCY_LIMIT})...")
     
     with open(OUTPUT_DATA_FILE, "a", encoding="utf-8") as f_data, \
          open(OUTPUT_BENCHMARK_FILE, "a", encoding="utf-8") as f_bench:

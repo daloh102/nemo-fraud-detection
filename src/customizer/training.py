@@ -3,11 +3,10 @@ import sys
 import torch
 import logging
 from omegaconf import DictConfig, OmegaConf
-from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig, TrainingArguments
+from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig, TrainingArguments, Trainer, DataCollatorForLanguageModeling
 from peft import get_peft_model, LoraConfig
 from huggingface_hub import snapshot_download
 from datasets import load_dataset
-from trl import SFTTrainer
 
 # Logging konfigurieren
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -76,7 +75,6 @@ def run_training(cfg: DictConfig) -> bool:
         model.print_trainable_parameters()
 
         # 3. Datensätze laden (aus YAML)
-        # 3. Datensätze laden (aus YAML - robust für Listen und Strings)
         train_file = OmegaConf.to_container(cfg.model.data.train_ds.file_names, resolve=True)
         if isinstance(train_file, list):
             train_file = train_file[0]
@@ -103,27 +101,33 @@ def run_training(cfg: DictConfig) -> bool:
             report_to="none"
         )
 
-        # 4. SFTTrainer starten
-        def formatting_func(example):
+        # 4. Dataset tokenisieren und Standard Trainer starten
+        def tokenize_function(example):
             if "input" in example and "output" in example:
-                return [f"### Instruction:\n{example['input']}\n\n### Response:\n{example['output']}"]
+                text = f"### Instruction:\n{example['input']}\n\n### Response:\n{example['output']}{tokenizer.eos_token}"
             elif "text" in example:
-                return [example["text"]]
+                text = example["text"] + tokenizer.eos_token
             else:
-                return [str(list(example.values())[0])]
+                text = str(list(example.values())[0]) + tokenizer.eos_token
+            
+            return tokenizer(text, truncation=True, max_length=2048)
 
-        # SFTTrainer mit Formatierungsfunktion starten
-        trainer = SFTTrainer(
+        logging.info("⚙️ Tokenisiere Trainingsdatensatz...")
+        tokenized_dataset = dataset["train"].map(
+            tokenize_function, 
+            remove_columns=dataset["train"].column_names
+        )
+
+        trainer = Trainer(
             model=model,
-            train_dataset=dataset["train"],
-            formatting_func=formatting_func,
-            max_seq_length=2048,
-            tokenizer=tokenizer,
             args=training_args,
+            train_dataset=tokenized_dataset,
+            data_collator=DataCollatorForLanguageModeling(tokenizer=tokenizer, mlm=False),
         )
 
         logging.info("🚀 Starte Fine-Tuning (Training)...")
         trainer.train()
+        
         # 5. Speichern des finalen Adapters
         trainer.model.save_pretrained(abs_save_path)
         tokenizer.save_pretrained(abs_save_path)

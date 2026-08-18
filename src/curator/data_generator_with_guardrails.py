@@ -1,19 +1,11 @@
 """
-Synthetischer Daten-Generator für Banking-Betrugserkennung (Fraud Detection SFT)
+Synthetischer Daten-Generator für Banking-Betrugserkennung (Fraud Detection SFT mit Guardrails)
 
 Dieses Skript generiert asynchron realistische Gesprächstranskripte von Telefonaten 
-zwischen Kunden und Bankmitarbeitern (unterscheidend zwischen Betrugsversuchen/Social 
-Engineering und legitimen Anfragen) mithilfe von NeMo Curator und NVIDIA NIM APIs.
+zwischen Kunden und Bankmitarbeitern mithilfe von NeMo Curator, NVIDIA NIM APIs und NeMo Guardrails.
 
-Hauptmerkmale:
-- **Generierung**: Erstellt strukturierte Transkripte mit dem Modell Llama-3.1-8b-instruct.
-- **LLM-as-a-Judge**: Bewertet die Qualität jedes generierten Beispiels über Llama-3.3-70b-instruct 
-  und filtert unzureichende Daten heraus (Qualitäts-Gate Score >= 4).
-- **Strukturierte Ausgabe**: Validierung über Pydantic und persistentes Speichern 
-  im JSONL-Format für Trainings- (SFT) und Benchmark-Zwecke.
-
-Autor:          Daniel Lohmann
-Datum:          2026
+Autor:         Daniel Lohmann
+Datum:         2026
 """
 
 import asyncio
@@ -26,23 +18,25 @@ from pydantic import BaseModel, Field, ValidationError
 from openai import OpenAI
 from nemo_curator import OpenAIClient
 from nemo_curator.synthetic import NemotronGenerator
+from nemoguardrails import LLMRails, RailsConfig
+import wandb
 
-# 1. Konfiguration über Environment Variables (Fallback auf Default)
+# 1. Konfiguration über Environment Variables (Lokaler NIM Server Port 8800)
 NIM_BASE_URL = os.getenv("NIM_BASE_URL", "http://172.17.0.1:8800/v1")
 GEN_MODEL = "meta/llama-3.1-8b-instruct"
-JUDGE_MODEL = "meta/llama-3.1-8b-instruct"  # Stäteres Modell für die Qualitätsprüfung
-OUTPUT_DATA_FILE = "fraud_call_transcripts_curator_2.jsonl"
-OUTPUT_BENCHMARK_FILE = "fraud_call_benchmark_curator_2.jsonl"
-NUM_SAMPLES = 10
-CONCURRENCY_LIMIT = 8  # Leicht reduziert, da nun zwei API-Aufrufe pro Sample (Gen + Judge) stattfinden
+JUDGE_MODEL = "meta/llama-3.1-8b-instruct"  # LLM-as-a-Judge Modell
+OUTPUT_DATA_FILE = "fraud_call_transcripts_curator.jsonl"
+OUTPUT_BENCHMARK_FILE = "fraud_call_benchmark_curator.jsonl"
+NUM_SAMPLES = 100
+CONCURRENCY_LIMIT = 8
 
-# NeMo Curator Client Setup (angelehnt an das NVIDIA Workshop-Beispiel 3.1)
+# NeMo Curator Client Setup (angepasst auf lokalen OpenAI-kompatiblen NIM Server)
 base_openai_client = OpenAI(base_url=NIM_BASE_URL, api_key="not-needed")
 curator_openai_client = OpenAIClient(base_openai_client)
 generator = NemotronGenerator(curator_openai_client)
 
 semaphore = asyncio.Semaphore(CONCURRENCY_LIMIT)
-file_lock = asyncio.Lock()  # Verhindert Verwaschen von Zeilen beim parallelen Schreiben
+file_lock = asyncio.Lock()
 
 # 2. Erweiterter Namens-Pool (20 Namen) für maximale Varianz im Finetuning
 KUNDEN_NAMEN = [
@@ -134,7 +128,7 @@ async def test_llm_connection():
         raise SystemExit(1)
 
 async def evaluate_sample_quality(text: str) -> int:
-    """LLM-as-a-Judge: Bewertet das generierte Transkript mit dem 70B Modell."""
+    """LLM-as-a-Judge: Bewertet das generierte Transkript mit dem LLM."""
     eval_prompt = (
         "Bewerte dieses Bank-Transkript auf einer Skala von 1-5 hinsichtlich Realismus "
         "und Eignung für ein Fraud-Detection-Training (SFT).\n"
@@ -159,7 +153,7 @@ async def evaluate_sample_quality(text: str) -> int:
     except Exception:
         return 0
 
-async def generate_single_sample(index: int, f_data, f_bench):
+async def generate_single_sample(index: int, f_data, f_bench, rails_app: LLMRails):
     global completed_counter
     doc_id = f"doc-{index:05d}"
     is_fraud = (index % 2 != 0)
@@ -192,22 +186,21 @@ async def generate_single_sample(index: int, f_data, f_bench):
             try:
                 temp = round(random.uniform(0.7, 0.95), 2)
                 
-                loop = asyncio.get_running_loop()
-                response = await loop.run_in_executor(
-                    None,
-                    lambda: curator_openai_client.query_model(
-                        model=GEN_MODEL,
-                        messages=[
-                            {"role": "system", "content": system_prompt},
-                            {"role": "user", "content": user_prompt}
-                        ],
-                        temperature=temp,
-                        max_tokens=max_tokens_limit,
-                    )
-                )
-
-                raw_content = response[0].strip()
+                # Generierung über NeMo Guardrails (mit lokalem NIM-Modell)
+                messages = [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt}
+                ]
                 
+                # Guardrails-Aufruf (asynchron)
+                rails_response = await rails_app.generate_async(messages=messages)
+                
+                # Extraktion der Antwort je nach Rückgabeformat von LLMRails
+                if isinstance(rails_response, dict):
+                    raw_content = rails_response.get("content", str(rails_response))
+                else:
+                    raw_content = str(rails_response)
+
                 clean_text = re.sub(r"^```(?:json)?\s*|\s*```$", "", raw_content, flags=re.MULTILINE).strip()
                 clean_text_fixed = re.sub(r'\\(?!["\\/bfnrt]|u[0-9a-fA-F]{4})', r'\\\\', clean_text)
                 
@@ -219,14 +212,14 @@ async def generate_single_sample(index: int, f_data, f_bench):
                 # Validierung über Pydantic Schema
                 data = TranscriptSchema(
                     id=doc_id,
-                    text=raw_json.get("text", ""),
+                    text=raw_json.get("text", raw_content),
                     source="nemo-curator-custom"
                 )
 
-                # NEUER SCHRITT: LLM-as-a-Judge Qualitätsprüfung
+                # LLM-as-a-Judge Qualitätsprüfung
                 score = await evaluate_sample_quality(data.text)
 
-                if score >= 3:  # Qualitäts-Gate
+                if score >= 4:  # Qualitäts-Gate
                     # Thread-sicheres Schreiben mit asyncio.Lock
                     async with file_lock:
                         f_data.write(data.model_dump_json() + "\n")
@@ -235,33 +228,67 @@ async def generate_single_sample(index: int, f_data, f_bench):
                         f_bench.write(json.dumps({"id": doc_id, "label": label, "score": score}, ensure_ascii=False) + "\n")
                         f_bench.flush()
                         
+                        # wandb Logging für jeden validen Sample
+                        wandb.log({
+                            "sample_score": score,
+                            "is_compliant": 1 if not is_fraud else 0,
+                            "is_accepted": 1
+                        })
+
                         completed_counter += 1
                         if completed_counter % 50 == 0 or completed_counter == NUM_SAMPLES:
                             print(f"⏳ Fortschritt (Curated & Judged): [{completed_counter}/{NUM_SAMPLES}] ({completed_counter/NUM_SAMPLES*100:.1f}%)")
                     return
                 else:
-                    print(f"❌ {doc_id} verworfen wegen zu geringer Qualität (Score: {score})")
                     if attempt == 2:
-                        return  # Nach 3 Versuchen abbrechen, wenn kein Sample den Judge überzeugt hat
+                        wandb.log({"is_accepted": 0})
+                        return
 
-            except (ValidationError, Exception) as e:
+            except Exception as e:
                 if attempt == 2:
-                    print(f"❌ Fehler bei {doc_id} nach 3 Versuchen: {e}")
+                    print(f"❌ Guardrails-Fehler bei {doc_id} nach 3 Versuchen: {e}")
                 await asyncio.sleep(1 * (attempt + 1))
 
 async def main():
+    # wandb initialisieren
+    wandb.init(project="nemo-fraud-detection-curator", name="synthetic-generation-with-guardrails")
+
     await test_llm_connection()
 
-    print(f"\n🚀 Starte NeMo Curator-gestützte Generierung mit LLM-Judge von bis zu {NUM_SAMPLES} Datensätzen (Max Concurrency: {CONCURRENCY_LIMIT})...")
+    # NeMo Guardrails Konfiguration für den lokalen NIM-Server laden
+    config = RailsConfig.from_content(
+        colang_content="",
+        yaml_content=f"""
+models:
+  - type: main
+    engine: openai
+    model: {GEN_MODEL}
+    parameters:
+      base_url: {NIM_BASE_URL}
+      api_key: not-needed
+        """
+    )
+    rails_app = LLMRails(config)
+
+    print(f"\n🚀 Starte Generierung mit Guardrails & Curator von bis zu {NUM_SAMPLES} Datensätzen (Max Concurrency: {CONCURRENCY_LIMIT})...")
     
     with open(OUTPUT_DATA_FILE, "a", encoding="utf-8") as f_data, \
          open(OUTPUT_BENCHMARK_FILE, "a", encoding="utf-8") as f_bench:
         
-        tasks = [generate_single_sample(i, f_data, f_bench) for i in range(1, NUM_SAMPLES + 1)]
+        tasks = [generate_single_sample(i, f_data, f_bench, rails_app) for i in range(1, NUM_SAMPLES + 1)]
         await asyncio.gather(*tasks)
 
-    print(f"\n✅ Fertig! Validierte Datensätze wurden in {OUTPUT_DATA_FILE} gespeichert.")
-    print(f"Dateigröße: {os.path.getsize(OUTPUT_DATA_FILE)} Bytes")
+    print(f"\n✅ Fertig! Validierte Datensätze wurden in {OUTPUT_DATA_FILE} und {OUTPUT_BENCHMARK_FILE} gespeichert.")
+
+    # Datensatz als wandb Artifact hochladen
+    print("📦 Lade Datensatz als wandb Artifact hoch...")
+    artifact = wandb.Artifact(name="fraud-transcripts-dataset", type="dataset")
+    artifact.add_file(OUTPUT_DATA_FILE)
+    artifact.add_file(OUTPUT_BENCHMARK_FILE)
+    wandb.log_artifact(artifact)
+    print("✨ wandb Artifact erfolgreich hochgeladen!")
+
+    wandb.finish()
 
 if __name__ == "__main__":
     asyncio.run(main())

@@ -1,10 +1,38 @@
+"""
+================================================================================
+Projekt:        NeMo Fraud Detection
+Skript-Name:    run_llm_judge.py
+Beschreibung:   Erweiterte LLM-gestützte Evaluierung (LLM-as-a-Judge) mit strukturierter 
+                Chain-of-Thought-Analyse für Kundengespräche und Betrugserkennung.
+
+Funktionsumfang:
+    1. Strukturierte Analyse (Worker-Modell): Das Modell analysiert Transkripte 
+       strikt nach Emotionen/Druck, Sicherheitsrisiko und finalem Resultat.
+    2. Automatisierter Qualitätsprüfer (Judge-Modell): Ein zweiter Prompt prüft 
+       unabhängig, ob die Analyse inhaltlich zum erwarteten Label (Ground Truth) passt.
+    3. Tabellarische Aufbereitung: Sammelt alle Ergebnisse in einem Pandas-DataFrame 
+       und gibt eine formatierte Übersicht im Terminal aus.
+    4. Reporting: Exportiert den detaillierten Audit-Report inklusive Begründungen 
+       als CSV-Datei zur weiteren Verwendung.
+
+Eingabedateien:
+    - Validierungsdaten: /data/nemo-fraud-detection/data/sft/validation.jsonl
+
+Ausgabedateien:
+    - CSV-Report: /data/nemo-fraud-detection/data/evaluation/evaluation_report.csv
+
+Autor:          Daniel Lohmann
+Jahr:           2026
+Erfolgreich getestet am: 19.08.2026
+================================================================================
+"""
 import json
 import re
 import requests
 import pandas as pd
 
-VAL_FILE = "/data/nemo-fraud-detection/data/sft/validation_new.jsonl"
-NIM_URL = "http://localhost:8000/v1/chat/completions"
+VAL_FILE = "/data/nemo-fraud-detection/data/sft/validation.jsonl"
+NIM_URL = "http://localhost:8800/v1/chat/completions"
 
 def evaluate_with_llm_judge():
     print(f"🚀 Starte Evaluierung mit strukturierter Pandas-Auswertung...\n")

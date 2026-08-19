@@ -1,7 +1,6 @@
 """
-================================================================================
 Projekt:        NeMo Fraud Detection
-Skript-Name:    sft_data_preparation.py (oder entsprechender Dateiname)
+Skript-Name:    sft_data_preparation.py
 Beschreibung:   Vorbereitung und Aufteilung von Supervised Fine-Tuning (SFT) 
                 Datensätzen für das Betrugserkennungs-Modell (Fraud Detection).
 
@@ -16,20 +15,19 @@ Funktionsumfang:
        im SFT-Zielverzeichnis.
 
 Eingabedateien:
-    - Kuratierte Transkripte: /data/nemo-fraud-detection/data/curated/dialogues_transcripts_curator.jsonl
-    - Benchmark-Labels:      /data/nemo-fraud-detection/data/evaluation/dialogues_benchmark.jsonl
+    - Kuratierte Transkripte: /data/nemo-fraud-detection/data/curated/transcripts_curated.jsonl
+    - Benchmark-Labels:      /data/nemo-fraud-detection/data/evaluation/transcripts_benchmark.jsonl
 
 Ausgabedateien (im Verzeichnis /data/nemo-fraud-detection/data/sft/):
-    - train.jsonl      (Training Data - 70%)
-    - validation.jsonl (Validation Data - 15%)
-    - test.jsonl       (Test Data - 15%)
+    - train.jsonl       (Training Data - 70%)
+    - validation.jsonl  (Validation Data - 15%)
+    - test.jsonl        (Test Data - 15%)
 
-Autor:          Daniel Lohmann
-Datum:          2026
-================================================================================
+Autor:         Daniel Lohmann
+Datum:         2026
+Erfolgreich getestet am: 19.08.2026
 """
 
-import os
 import sys
 import json
 import random
@@ -39,10 +37,11 @@ from pathlib import Path
 # 1. PFAD-KONFIGURATION
 # ==============================================================================
 BASE_DIR = Path("/data")
-DATA_DIR = BASE_DIR / "data"
+DATA_DIR = BASE_DIR / "nemo-fraud-detection" / "data"
 
-CURATED_PATH = DATA_DIR / "curated" / "dialogues_transcripts_curator_new.jsonl"
-BENCHMARK_PATH = DATA_DIR / "evaluation" / "dialogues_benchmark.jsonl"
+CURATED_PATH = DATA_DIR / "curated" / "transcripts_curated.jsonl"
+# Korrigierter Dateiname hier:
+BENCHMARK_PATH = DATA_DIR / "evaluation" / "transcripts_benchmark.jsonl"
 SFT_DIR = DATA_DIR / "sft"
 
 # ==============================================================================
@@ -88,7 +87,7 @@ def main():
     curated_data = load_jsonl(CURATED_PATH)
     benchmark_data = load_jsonl(BENCHMARK_PATH)
 
-    # 1. Lookup-Map aus Benchmark aufbauen (Schlüssel: "id", z.B. "doc-00001")
+    # 1. Lookup-Map aus Benchmark aufbauen (Schlüssel: "id")
     gt_map = {}
     for item in benchmark_data:
         cid = item.get("id")
@@ -96,14 +95,13 @@ def main():
         if cid and label:
             gt_map[str(cid)] = label
 
-    # 2. Matching über 'call_id' ausführen
+    # 2. Matching über 'call_id' oder 'id' ausführen
     sft_samples = []
     matched_count = 0
     unmatched_count = 0
 
     for doc in curated_data:
         text = doc.get("text", "")
-        # Priorisiere 'call_id' (z. B. "doc-00001"), Fallback auf 'id'
         cid = str(doc.get("call_id") or doc.get("id", ""))
         
         gt_label = gt_map.get(cid)
@@ -124,7 +122,6 @@ def main():
     if unmatched_count > 0:
         print(f"    ⚠️ Ohne passendes Label übersprungen: {unmatched_count} Dokument(e)")
 
-    # Sicherheitsprüfung: Wenn gar keine Daten übrig bleiben, erst dann abbrechen
     if len(sft_samples) == 0:
         print(f"\n❌ KRITISCHER FEHLER: Es konnten keine einzigen SFT-Daten gematcht werden!")
         sys.exit(1)
@@ -144,9 +141,9 @@ def main():
     # 4. Speichern
     SFT_DIR.mkdir(parents=True, exist_ok=True)
     
-    train_path = SFT_DIR / "train_new.jsonl"
-    val_path = SFT_DIR / "validation_new.jsonl"
-    test_path = SFT_DIR / "test_new.jsonl"
+    train_path = SFT_DIR / "train.jsonl"
+    val_path = SFT_DIR / "validation.jsonl"
+    test_path = SFT_DIR / "test.jsonl"
 
     save_jsonl(train_data, train_path)
     save_jsonl(val_data, val_path)

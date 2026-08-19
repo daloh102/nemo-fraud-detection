@@ -1,14 +1,60 @@
+"""
+================================================================================
+Projekt:        NeMo Fraud Detection
+Skript-Name:    evaluate_baseline.py
+Beschreibung:   Faire Chat-Baseline-Evaluierung des unmodifizierten Basismodells 
+                (Llama-3.1-8B-Instruct via NIM) vor dem Supervised Fine-Tuning (SFT).
+
+Funktionsumfang:
+    1. Pre-Flight-Check: Prüft vorab, ob der NIM-Service erreichbar ist (Fail-Fast).
+    2. API-Abfrage: Sendet validierte Transkripte per Chat-Completion-Endpunkt an das Modell.
+    3. Label-Mapping & Parsing: Mappt Ground-Truth-Labels und extrahiert die 
+       Modellantwort robust via Regex.
+    4. Metriken & Tracking: Berechnet die Genauigkeit (Accuracy) und loggt 
+       die Ergebnisse automatisch an Weights & Biases (wandb).
+
+Eingabedateien:
+    - Validierungsdaten: /data/nemo-fraud-detection/data/sft/validation.jsonl
+
+Autor:         Daniel Lohmann
+Datum:         2026
+Erfolgreich getestet am: 19.08.2026
+================================================================================
+"""
 import json
 import re
 import requests
 import wandb
+import sys
 
-VAL_FILE = "/data/nemo-fraud-detection/data/sft/validation_new.jsonl"
-NIM_URL = "http://localhost:8000/v1/chat/completions"  # Nutzt den Chat-Endpunkt
+VAL_FILE = "/data/nemo-fraud-detection/data/sft/validation.jsonl"
+# WICHTIG: Falls der NIM auf dem Host läuft und das Skript im Container,
+# nutze ggf. die IP des Host-Netzwerks statt 'localhost'
+NIM_URL = "http://localhost:8800/v1/chat/completions"
+
+def check_llm_connection():
+    """Prüft vor dem Start, ob der NIM-Service erreichbar ist."""
+    print("🔍 Prüfe Verbindung zum LLM (NIM-Service)...")
+    try:
+        # Ein einfacher Test-Call an den NIM
+        response = requests.get("http://localhost:8800/v1/models", timeout=5)
+        if response.status_code == 200:
+            print("✅ Verbindung zum LLM steht!")
+            return True
+        else:
+            print(f"❌ Verbindung fehlgeschlagen. Status-Code: {response.status_code}")
+            return False
+    except Exception as e:
+        print(f"❌ Verbindung zum NIM-Service unter '{NIM_URL}' nicht möglich: {e}")
+        print("💡 Tipp: Wenn das Skript im Docker läuft, stelle sicher, dass der NIM erreichbar ist (ggf. --network host).")
+        return False
 
 def run_chat_baseline():
+    if not check_llm_connection():
+        sys.exit(1)
+
     wandb.init(project="fraud-detection", name="baseline-chat-evaluation")
-    print(f"🚀 Starte faire Chat-Baseline-Evaluierung mit dem Basismodell...\n")
+    print(f"🚀 Starte faire Chat-Baseline-Evaluierung...\n")
     
     correct = 0
     total = 0
@@ -18,13 +64,19 @@ def run_chat_baseline():
             data = json.loads(line)
             
             input_content = data.get("input", "")
-            true_label = data.get("output", "").strip().lower()
+            raw_true = data.get("output", "").strip().lower()
+            
+            # Mappe deutsche Labels auf das englische Schema ('fraud' / 'legitimate')
+            if "betrug" in raw_true and "kein" not in raw_true:
+                true_label = "fraud"
+            else:
+                true_label = "legitimate"
             
             if not input_content:
                 continue
                 
             payload = {
-                "model": "meta-llama/Llama-3.2-3B-Instruct",
+                "model": "meta/llama-3.1-8b-instruct",
                 "messages": [
                     {
                         "role": "system",

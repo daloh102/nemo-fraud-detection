@@ -28,3 +28,11 @@ __pycache__/
 .venv/
 venv/
 env/
+
+# Lokale Caches & Datenbanken
+src/evaluator/wandb/
+src/evaluator/mlflow.db
+wandb/
+results/
+untitled.txt
+"Projektstruktur *.pdf"

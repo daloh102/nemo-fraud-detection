@@ -1,11 +1,37 @@
+"""
+================================================================================
+Projekt:        NeMo Fraud Detection
+Skript-Name:    run_evaluation_with_mlflow.py
+Beschreibung:   Evaluierung des Basismodells (Llama-3.1-8B-Instruct via NIM)
+                in den Modi 'Zero-Shot' und 'Few-Shot' zur Betrugserkennung.
+                Berechnet Metriken wie Accuracy, Precision, Recall und F1-Score
+                und protokolliert die Ergebnisse automatisch in MLflow.
+
+Funktionsumfang:
+    1. Modus-Steuerung: Testet das Modell wahlweise mit reiner Aufgabenstellung 
+       (Zero-Shot) oder inkl. Positiv-/Negativ-Beispielen (Few-Shot).
+    2. API-Kommunikation: Fragt den lokalen NIM-Endpunkt per Chat-Completion ab.
+    3. Robustes Parsing: Extrahiert das finale Ergebnis ('fraud' / 'legitimate') 
+       aus der generierten Textantwort.
+    4. Metrik-Berechnung & Tracking: Nutzt scikit-learn für detaillierte Metriken 
+       und speichert Runs direkt in MLflow.
+
+Eingabedateien:
+    - Validierungsdaten: /data/nemo-fraud-detection/data/sft/validation.jsonl
+
+Autor:          Daniel Lohmann
+Jahr:           2026
+Erfolgreich getstet am: 19.08.2026
+================================================================================
+"""
 import json
 import re
 import requests
 import mlflow
 from sklearn.metrics import classification_report, accuracy_score, precision_recall_fscore_support
 
-VAL_FILE = "/data/nemo-fraud-detection/data/sft/validation_new.jsonl"
-NIM_URL = "http://localhost:8000/v1/chat/completions"
+VAL_FILE = "/data/nemo-fraud-detection/data/sft/validation.jsonl"
+NIM_URL = "http://localhost:8800/v1/chat/completions"
 
 # MLflow Experiment konfigurieren
 mlflow.set_experiment("NeMo-Fraud-Detection-Evaluation")

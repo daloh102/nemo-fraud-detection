@@ -3,7 +3,7 @@ import sys
 import torch
 import logging
 from omegaconf import DictConfig, OmegaConf
-from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig, TrainingArguments, Trainer, DataCollatorForLanguageModeling
+from transformers import AutoModelForCausalLM, AutoTokenizer, TrainingArguments, Trainer, DataCollatorForLanguageModeling
 from peft import get_peft_model, LoraConfig
 from huggingface_hub import snapshot_download
 from datasets import load_dataset
@@ -41,18 +41,12 @@ def run_training(cfg: DictConfig) -> bool:
             logging.info(f"📥 Lade Hugging Face Modell '{model_path}' herunter...")
             model_path = snapshot_download(repo_id=model_path)
 
-        logging.info(f"📥 Initialisiere QLoRA Modell von: {model_path}...")
+        logging.info(f"📥 Initialisiere Standard 16-bit LoRA Modell von: {model_path}...")
 
-        # 1. QLoRA Konfiguration
-        bnb_config = BitsAndBytesConfig(
-            load_in_4bit=True,
-            bnb_4bit_compute_dtype=torch.float16,
-            bnb_4bit_quant_type="nf4"
-        )
-
+        # 1. 16-bit LoRA Modell laden (kein bitsandbytes / QLoRA erforderlich)
         model = AutoModelForCausalLM.from_pretrained(
             model_path,
-            quantization_config=bnb_config,
+            torch_dtype=torch.float16,
             device_map="auto"
         )
 
@@ -61,12 +55,12 @@ def run_training(cfg: DictConfig) -> bool:
             tokenizer.pad_token = tokenizer.eos_token
         tokenizer.padding_side = "right"
 
-        # 2. LoRA Adapter Konfiguration
+        # 2. LoRA Adapter Konfiguration (greift sicher auf YAML-Strukturen zu)
         peft_config = LoraConfig(
-            r=cfg.model.get("peft", {}).get("r", 16),
-            lora_alpha=cfg.model.get("peft", {}).get("alpha", 32),
+            r=cfg.model.get("peft", {}).get("qlora_tuning", {}).get("adapter_dim", 16),
+            lora_alpha=cfg.model.get("peft", {}).get("qlora_tuning", {}).get("lora_alpha", 32),
             target_modules=["q_proj", "v_proj", "k_proj", "out_proj", "fc_in", "fc_out", "w1", "w2"],
-            lora_dropout=0.05,
+            lora_dropout=cfg.model.get("peft", {}).get("qlora_tuning", {}).get("adapter_dropout", 0.05),
             bias="none",
             task_type="CAUSAL_LM"
         )
@@ -85,18 +79,21 @@ def run_training(cfg: DictConfig) -> bool:
         logging.info(f"📂 Lade Trainingsdaten von: {train_file}")
         dataset = load_dataset("json", data_files={"train": train_file})
 
-        save_path = cfg.model.get("save_to", "results/fraud_detection_qlora")
+        save_path = cfg.model.get("save_to", "results/fraud_detection_lora")
         abs_save_path = save_path if os.path.isabs(save_path) else os.path.join(PROJECT_ROOT, save_path)
+
+        micro_batch = cfg.model.get("data", {}).get("train_ds", {}).get("micro_batch_size", 1)
+        learning_rate = cfg.model.get("optim", {}).get("lr", 2e-4)
 
         training_args = TrainingArguments(
             output_dir=abs_save_path,
-            per_device_train_batch_size=cfg.model.get("micro_batch_size", 2),
-            gradient_accumulation_steps=cfg.model.get("gradient_accumulation_steps", 4),
-            learning_rate=cfg.model.get("optim", {}).get("lr", 2e-4),
+            per_device_train_batch_size=micro_batch,
+            gradient_accumulation_steps=4,
+            learning_rate=learning_rate,
             logging_steps=10,
             save_strategy="epoch",
             fp16=True,
-            optim="paged_adamw_8bit",
+            optim="adamw_torch",
             max_steps=cfg.model.get("max_steps", 100),
             report_to="none"
         )

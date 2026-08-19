@@ -17,7 +17,7 @@ Der Prozess gliedert sich in folgende logische Hauptschritte:
         Texte, die keinen inhaltlichen Mehrwert bieten (unter 50 Zeichen), aus dem Datensatz entfernt.
 
 *   Advanced Data Curation Pipeline: Unter Verwendung von RAPIDS/CUDA-beschleunigtem Computing 
-    durchläuft der Datensatz einen strukturierten Prozess:
+    durchläuft the Datensatz einen strukturierten Prozess:
     1. Identifikation: Jeder Eintrag erhält eine eindeutige ID für die Nachverfolgbarkeit.
     2. Bereinigung: Unicode-Zeichen werden standardisiert und die oben definierte PII-Maskierung angewendet.
     3. Klassifikation: Einsatz eines DeBERTa-basierten multilingualen Domain-Klassifikators zur 
@@ -34,8 +34,9 @@ Zusammenfassend dient das Skript dazu, aus verrauschten Rohdaten einen hochwerti
 und bereinigten Datensatz zu erzeugen, der für das Training von KI-Modellen im Finanzsektor 
 optimiert ist.
 
-Autor:          Daniel Lohmann
-Datum:          2026
+Autor:         Daniel Lohmann
+Datum:         2026
+Erfolgreich getestet am: 19.08.2026
 """
 
 import sys
@@ -51,7 +52,6 @@ from nemo_curator import Modify, ScoreFilter, Sequential, AddId
 from nemo_curator.datasets import DocumentDataset
 from nemo_curator.filters import DocumentFilter
 from nemo_curator.modules import ExactDuplicates
-from nemo_curator.classifiers import DomainClassifier
 from nemo_curator.utils.distributed_utils import get_client
 from nemo_curator.modifiers import DocumentModifier, UnicodeReformatter
 
@@ -59,16 +59,15 @@ from nemo_curator.modifiers import DocumentModifier, UnicodeReformatter
 from dask_cuda import LocalCUDACluster
 from distributed import Client
 
-# Native NeMo Curator & RAPIDS Imports
-from nemo_curator import Modify, ScoreFilter, Sequential, AddId
 # ==============================================================================
 # 1. PFAD- & ORDNER-KONFIGURATION
 # ==============================================================================
 BASE_DIR = Path("/data")
-DATA_DIR = BASE_DIR / "data"
+DATA_DIR = BASE_DIR / "nemo-fraud-detection" / "data"
 
-INPUT_PATH = INPUT_PATH = DATA_DIR / "raw" / "dialogues_transcripts_noisy_new.jsonl"
-CURATED_OUT_PATH = DATA_DIR / "curated" / "dialogues_transcripts_curator_new.jsonl"
+# Liest die im letzten Schritt erzeugte Noise-Datei aus dem raw-Ordner ein
+INPUT_PATH = DATA_DIR / "raw" / "transcripts_noisy.jsonl"
+CURATED_OUT_PATH = DATA_DIR / "curated" / "transcripts_curated.jsonl"
 TEMP_EXPORT_DIR = DATA_DIR / "curated" / "_temp_curator_export"
 DEDUP_LOG_DIR = DATA_DIR / "curated" / "dedup_logs"
 DEDUP_CACHE_DIR = DATA_DIR / "curated" / "dedup_cache"
@@ -81,6 +80,7 @@ DEDUP_CACHE_DIR.mkdir(parents=True, exist_ok=True)
 os.environ["KVIKIO_COMPAT_MODE"] = "ON"
 os.environ["CUDF_CUFILE_ENABLED"] = "0"
 os.environ["RAPIDS_NO_CUFILE"] = "1"
+
 # ==============================================================================
 # 2. STRIKTES ERROR HANDLING
 # ==============================================================================
@@ -140,10 +140,10 @@ class FraudPiiModifier(DocumentModifier):
         # 5. Handynummern
         doc = re.sub(r'\b(?:\+49|0)\s*1[567]\d[\s\-]?\d{3,8}\b', '[HANDYNUMMER_MASKIERT]', doc)
         
-        # 6. Adressen (jetzt auch mit mehrteiligen Straßennamen wie "Berliner Straße")
+        # 6. Adressen
         doc = re.sub(r'\b(?:[A-ZÄÖÜ][a-zäöüß]+\s+)?[A-ZÄÖÜ][a-zäöüß]+(?:straße|str\.|weg|allee|platz|ring)\s+\d+[a-zA-Z]?,?\s*\d{5}\s+[A-ZÄÖÜ][a-zäöüß]+\b', '[ADRESSE_MASKIERT]', doc, flags=re.IGNORECASE)
         
-        # 7. Kundennummern (Erkennt z.B. 9-stellige Nummern im Kontext oder als ID)
+        # 7. Kundennummern
         doc = re.sub(r'\b\d{9}\b', '[KUNDENNUMMER_MASKIERT]', doc)
         
         return doc
@@ -171,13 +171,12 @@ class MinLengthFilter(DocumentFilter):
         return score >= self.min_length
 
 # ==============================================================================
-# 4. MAIN CURATOR PIPELINE (Mit Advanced Processing)
+# 4. MAIN CURATOR PIPELINE
 # ==============================================================================
 def main():
     initial_count = validate_input_file(INPUT_PATH)
 
     print("🚀 Initialisiere NeMo Curator Execution Client (GPU/CUDA Backend)...")
-    # Einziger zentraler Client-Start ganz am Anfang
     client = get_client(cluster_type="gpu", set_torch_to_use_rmm=False)
     print("🔗 Dask-Client erfolgreich verbunden.")
 
@@ -231,6 +230,7 @@ def main():
         if CURATED_OUT_PATH.is_dir():
             shutil.rmtree(CURATED_OUT_PATH)
         else:
+        
             CURATED_OUT_PATH.unlink()
 
     print(f"💾 Schreibe finalen, kurierten Datensatz nach: {CURATED_OUT_PATH}")

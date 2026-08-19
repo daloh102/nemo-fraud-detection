@@ -8,24 +8,25 @@ vor. Es liest rohe Dialog-Transkripte im JSONL-Format ein und injiziert gezielt 
 Rauschen, um die Robustheit nachfolgender NLP- und Machine-Learning-Modelle zu testen.
 
 Simulierte Fehlertypen & Injektionswahrscheinlichkeiten:
-  • Exakte Duplikate        (Standard: 8%)
+  • Exakte Duplikate         (Standard: 8%)
   • PII-Lecks (Personenbez.) (Standard: 7%)
   • Textmüll / Garbage       (Standard: 5%)
   • Encoding-Fehler (Umlaute) (Standard: 3%)
   • Saubere Originaltexte    (~77%)
 
 Eingabe:
-  - /data/nemo-fraud-detection/data/raw/dialogues_transcripts.jsonl
+  - /data/nemo-fraud-detection/transcripts.jsonl
 
 Ausgabe:
-  - /data/nemo-fraud-detection/data/raw/dialogues_transcripts_noisy.jsonl
+  - /data/nemo-fraud-detection/transcripts_noisy.jsonl
   - Konsolenausgabe mit detaillierter Injektions-Statistik.
 
 Verwendung:
   python <skript_name>.py
 
-Autor:          Daniel Lohmann
-Datum:          2026
+Autor:         Daniel Lohmann
+Datum:         2026
+Erfolgreich geprüft am: 19.08.2026
 """
 
 import sys
@@ -38,10 +39,10 @@ from typing import Any, Dict, List
 # 1. KONFIGURATION & PFADE
 # ==============================================================================
 BASE_DIR = Path("/data")
-DATA_DIR = BASE_DIR / "data"
+DATA_DIR = BASE_DIR / "nemo-fraud-detection" / "data" / "raw"
 
-ORIGINAL_RAW_PATH = DATA_DIR / "raw" / "fraud_call_transcripts_curator.jsonl"
-NOISY_RAW_PATH = DATA_DIR / "raw" / "dialogues_transcripts_noisy_new.jsonl"
+ORIGINAL_RAW_PATH = DATA_DIR / "transcripts.jsonl"
+NOISY_RAW_PATH = DATA_DIR / "transcripts_noisy.jsonl"
 
 NOISY_RAW_PATH.parent.mkdir(parents=True, exist_ok=True)
 

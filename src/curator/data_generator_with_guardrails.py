@@ -6,6 +6,7 @@ zwischen Kunden und Bankmitarbeitern mithilfe von NeMo Curator, NVIDIA NIM APIs 
 
 Autor:         Daniel Lohmann
 Datum:         2026
+Erforlgreich getestet am: 19.08.2026
 """
 
 import asyncio
@@ -19,14 +20,13 @@ from openai import OpenAI
 from nemo_curator import OpenAIClient
 from nemo_curator.synthetic import NemotronGenerator
 from nemoguardrails import LLMRails, RailsConfig
-import wandb
 
 # 1. Konfiguration über Environment Variables (Lokaler NIM Server Port 8800)
 NIM_BASE_URL = os.getenv("NIM_BASE_URL", "http://172.17.0.1:8800/v1")
 GEN_MODEL = "meta/llama-3.1-8b-instruct"
 JUDGE_MODEL = "meta/llama-3.1-8b-instruct"  # LLM-as-a-Judge Modell
-OUTPUT_DATA_FILE = "fraud_call_transcripts_curator.jsonl"
-OUTPUT_BENCHMARK_FILE = "fraud_call_benchmark_curator.jsonl"
+OUTPUT_DATA_FILE = "/data/nemo-fraud-detection/data/raw/transcripts.jsonl"
+OUTPUT_BENCHMARK_FILE = "/data/nemo-fraud-detection/data/raw/fraud_call_benchmark_curator.jsonl"
 NUM_SAMPLES = 100
 CONCURRENCY_LIMIT = 8
 
@@ -227,21 +227,13 @@ async def generate_single_sample(index: int, f_data, f_bench, rails_app: LLMRail
                         
                         f_bench.write(json.dumps({"id": doc_id, "label": label, "score": score}, ensure_ascii=False) + "\n")
                         f_bench.flush()
-                        
-                        # wandb Logging für jeden validen Sample
-                        wandb.log({
-                            "sample_score": score,
-                            "is_compliant": 1 if not is_fraud else 0,
-                            "is_accepted": 1
-                        })
 
-                        completed_counter += 1
-                        if completed_counter % 50 == 0 or completed_counter == NUM_SAMPLES:
-                            print(f"⏳ Fortschritt (Curated & Judged): [{completed_counter}/{NUM_SAMPLES}] ({completed_counter/NUM_SAMPLES*100:.1f}%)")
+                    completed_counter += 1
+                    if completed_counter % 50 == 0 or completed_counter == NUM_SAMPLES:
+                        print(f"⏳ Fortschritt (Curated & Judged): [{completed_counter}/{NUM_SAMPLES}] ({completed_counter/NUM_SAMPLES*100:.1f}%)")
                     return
                 else:
                     if attempt == 2:
-                        wandb.log({"is_accepted": 0})
                         return
 
             except Exception as e:
@@ -250,9 +242,6 @@ async def generate_single_sample(index: int, f_data, f_bench, rails_app: LLMRail
                 await asyncio.sleep(1 * (attempt + 1))
 
 async def main():
-    # wandb initialisieren
-    wandb.init(project="nemo-fraud-detection-curator", name="synthetic-generation-with-guardrails")
-
     await test_llm_connection()
 
     # NeMo Guardrails Konfiguration für den lokalen NIM-Server laden
@@ -279,16 +268,6 @@ models:
         await asyncio.gather(*tasks)
 
     print(f"\n✅ Fertig! Validierte Datensätze wurden in {OUTPUT_DATA_FILE} und {OUTPUT_BENCHMARK_FILE} gespeichert.")
-
-    # Datensatz als wandb Artifact hochladen
-    print("📦 Lade Datensatz als wandb Artifact hoch...")
-    artifact = wandb.Artifact(name="fraud-transcripts-dataset", type="dataset")
-    artifact.add_file(OUTPUT_DATA_FILE)
-    artifact.add_file(OUTPUT_BENCHMARK_FILE)
-    wandb.log_artifact(artifact)
-    print("✨ wandb Artifact erfolgreich hochgeladen!")
-
-    wandb.finish()
 
 if __name__ == "__main__":
     asyncio.run(main())

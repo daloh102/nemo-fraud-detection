@@ -7,15 +7,10 @@ RUN pip install --no-cache-dir \
     protobuf \
     requests \
     mlflow \
-    scikit-learn \
-    bitsandbytes
-
-# Erneuter, erzwungener Durchlauf für bitsandbytes, um saubere Paket-Metadaten sicherzustellen
-RUN pip install --upgrade --force-reinstall bitsandbytes
-
+    scikit-learn 
+    
 # Upgrade der übrigen Pakete
 RUN pip install --upgrade wandb protobuf mlflow scikit-learn
-RUN pip install --upgrade --force-reinstall torchvision
 
 # Arbeitsverzeichnis setzen
 WORKDIR /data

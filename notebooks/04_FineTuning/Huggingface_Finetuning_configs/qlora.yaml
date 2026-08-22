@@ -1,0 +1,49 @@
+trainer:
+  devices: 1
+  num_nodes: 1
+  accelerator: gpu
+  precision: 16-mixed
+  logger: False
+  enable_checkpointing: False
+  max_epochs: 3
+  max_steps: -1
+  val_check_interval: 1.0
+  gradient_clip_val: 1.0
+
+model:
+  restore_from_path: "meta-llama/Meta-Llama-3.1-8B-Instruct" # <--- hf:// Prefix hinzugefügt
+  save_to: "/data/nemo-fraud-detection/data/evaluation/fraud_detection_qlora"
+
+  peft:
+    peft_scheme: "lora"
+    qlora_tuning:
+      adapter_dim: 16
+      adapter_dropout: 0.05
+      lora_alpha: 32
+      quantization_bit: 4
+
+  data:
+    train_ds:
+      file_names: ["data/sft/train.jsonl"]
+      global_batch_size: 4
+      micro_batch_size: 1
+      shuffle: True
+      num_workers: 2
+      max_seq_length: 2048
+
+    validation_ds:
+      file_names: ["data/sft/validation.jsonl"]
+      global_batch_size: 4
+      micro_batch_size: 1
+      shuffle: False
+      num_workers: 2
+      max_seq_length: 2048
+
+  optim:
+    name: adamw
+    lr: 2e-4
+    weight_decay: 0.01
+    sched:
+      name: CosineAnnealing
+      warmup_steps: 50
+      min_lr: 1e-6

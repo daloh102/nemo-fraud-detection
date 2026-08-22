@@ -1,0 +1,26 @@
+GPU available: True (cuda), used: True
+TPU available: False, using: 0 TPU cores
+HPU available: False, using: 0 HPUs
+----------------------------------------------------------------------------------------------------
+distributed_backend=nccl
+All distributed processes registered. Starting with 1 processes
+----------------------------------------------------------------------------------------------------
+
+LOCAL_RANK: 0 - CUDA_VISIBLE_DEVICES: [0]
+
+  | Name  | Type     | Params | Mode 
+-------------------------------------------
+0 | model | GPTModel | 3.6 B  | train
+-------------------------------------------
+11.4 M    Trainable params
+3.6 B     Non-trainable params
+3.6 B     Total params
+14,472.425Total estimated model params size (MB)
+877       Modules in train mode
+0         Modules in eval mode
+Metric val_loss improved. New best score: 8.819
+Epoch 0, global step 5: 'validation_loss' reached 8.81884 (best 8.81884), saving model to '/data/nemo-fraud-detection/src/customizer/nemo_experiments/megatron_gpt_peft_adapter_tuning/checkpoints/megatron_gpt_peft_adapter_tuning--validation_loss=8.819-step=5-consumed_samples=640.0.ckpt' as top 1
+Epoch 0, global step 10: 'validation_loss' was not in top 1
+`Trainer.fit` stopped: `max_steps=10` reached.
+Restoring states from the checkpoint path at /data/nemo-fraud-detection/src/customizer/nemo_experiments/megatron_gpt_peft_adapter_tuning/checkpoints/megatron_gpt_peft_adapter_tuning--validation_loss=8.819-step=5-consumed_samples=640.0.ckpt
+Restored all states from the checkpoint at /data/nemo-fraud-detection/src/customizer/nemo_experiments/megatron_gpt_peft_adapter_tuning/checkpoints/megatron_gpt_peft_adapter_tuning--validation_loss=8.819-step=5-consumed_samples=640.0.ckpt

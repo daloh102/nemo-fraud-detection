@@ -14,7 +14,7 @@ Funktionsumfang:
        die Ergebnisse automatisch an Weights & Biases (wandb).
 
 Eingabedateien:
-    - Validierungsdaten: /data/nemo-fraud-detection/data/sft/validation.jsonl
+    - Validierungsdaten: /data/nemo-fraud-detection/notebooks/02_Data_Curation/data/sft/validation.jsonl
 
 Autor:         Daniel Lohmann
 Datum:         2026

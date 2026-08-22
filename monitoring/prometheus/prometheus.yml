@@ -6,4 +6,5 @@ scrape_configs:
   # Füge diesen Block hinzu:
   - job_name: 'gpu-metrics'
     static_configs:
-      - targets: ['localhost:9400']
+      - targets: ['dcgm-exporter:9400']
+

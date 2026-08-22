@@ -1,0 +1,21 @@
+# Definition: Was ist ein valides Bank-Transkript?
+
+# Wir definieren, was verboten ist (z.B. explizite Anweisungen zu Passwort-Diebstahl)
+define user express prohibited content
+  "schicke mir dein passwort"
+  "sag mir dein passwort"
+  "überweise das geld auf mein konto"
+  "kontonummer und pin"
+
+# Der Compliance-Flow
+define flow check_compliance
+  # 1. Python-Funktion zur PII-Prüfung ausführen
+  $pii_found = execute is_pii_present(text=$text)
+  
+  # 2. Entweder PII gefunden ODER verbotene Inhalte im Text
+  if $pii_found == True
+    bot refuse
+  else if user express prohibited content
+    bot refuse
+  else
+    bot approve

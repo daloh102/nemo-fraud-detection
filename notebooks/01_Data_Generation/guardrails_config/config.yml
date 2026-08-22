@@ -1,0 +1,16 @@
+models:
+  - type: main
+    engine: openai
+    model: meta/llama-3.1-8b-instruct
+    parameters:
+      base_url: http://172.17.0.1:8800/v1
+      api_key: not-needed
+      timeout: 60.0  
+
+rails:
+  config:
+    flows:
+      - name: check_compliance
+
+  dialog:
+    single_turn: True

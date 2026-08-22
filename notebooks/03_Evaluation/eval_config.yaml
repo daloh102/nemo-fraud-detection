@@ -1,0 +1,23 @@
+general:
+  output:
+    dir: "/data/nemo-fraud-detection/data/evaluation/results"
+
+llms:
+  nim_llm:
+    _type: "openai" # Da der NIM-Container ein OpenAI-kompatibles API bereitstellt
+    model_name: "meta/llama-3.1-8b-instruct"
+    api_base: "http://localhost:8000/v1"
+    api_key: "not-needed"
+    temperature: 0.0
+
+dataset:
+  _type: "jsonl"
+  file_path: "/data/nemo-fraud-detection/data/sft/validation_new.jsonl"
+  # Mappt deine JSONL-Felder auf die Standard-Eingaben des Evaluators
+  input_field: "input"
+  output_field: "output"
+
+eval:
+  metrics:
+    - exact_match
+    - semantic_similarity
